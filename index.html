@@ -339,14 +339,34 @@ table.inv-table td.num{text-align:right;font-family:var(--font-mono);}
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
       </div>
 
-      <label style="margin-top:14px;">Agregar producto</label>
-      <div class="search">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input type="text" id="productSearch" placeholder="Buscar producto o escribir uno libre…" oninput="renderProductSuggestions()">
+      <div class="chip-row" style="margin-top:12px;">
+        <button class="chip active" id="modeChip-detallado" onclick="setFacturaModo('detallado')">Detallado</button>
+        <button class="chip" id="modeChip-rapido" onclick="setFacturaModo('rapido')">Factura rápida</button>
       </div>
-      <div id="productSuggestions"></div>
 
-      <div class="card" style="margin-top:12px;">
+      <div id="detalladoBlock">
+        <div class="row" style="align-items:flex-end;margin-top:6px;">
+          <div style="flex:1;">
+            <label>Agregar producto</label>
+            <div class="search" style="margin-bottom:0;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <input type="text" id="productSearch" placeholder="Buscar producto…" oninput="renderProductSuggestions()">
+            </div>
+          </div>
+          <button class="btn gold" style="flex:none;" onclick="openFreeItemModal()">+ Libre</button>
+        </div>
+        <div id="productSuggestions"></div>
+      </div>
+
+      <div id="rapidoBlock" class="card" style="display:none;margin-top:12px;">
+        <p class="hint">Cobra un monto total sin desglosar productos — ideal para ventas rápidas.</p>
+        <label>Concepto</label>
+        <input type="text" id="rapidoConcepto" placeholder="Ej: Venta varios / Servicio" oninput="syncRapidoCart()">
+        <label>Monto total</label>
+        <input type="number" id="rapidoMonto" step="0.01" placeholder="0.00" oninput="syncRapidoCart()">
+      </div>
+
+      <div class="card" id="detalleCard" style="margin-top:12px;">
         <div id="cartList"></div>
         <div id="cartEmpty" class="empty" style="display:none;">
           <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h2l2.4 12.4a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 8H6"/></svg>
@@ -376,7 +396,7 @@ table.inv-table td.num{text-align:right;font-family:var(--font-mono);}
           <div class="totals-row grand"><span>Total</span><span class="val" id="totTotal">0.00</span></div>
         </div>
 
-        <button class="btn ghost sm" style="margin-top:10px;" onclick="toggleDiscount()">+ Aplicar descuento</button>
+        <button class="btn ghost sm" id="discountToggleBtn" style="margin-top:10px;" onclick="toggleDiscount()">+ Aplicar descuento</button>
       </div>
 
       <div class="card" id="paymentCard" style="display:none;">
@@ -831,9 +851,11 @@ function renderProductSuggestions(){
       <div class="meta"><div class="name">${esc(p.nombre)}</div>${p.categoria?`<div class="sub">${esc(p.categoria)}</div>`:''}</div>
       <div class="price tabular">${money(p.precio)}</div>
     </div>`).join('');
-  html += `<div class="pick-row" onclick="addFreeItem()">
-      <div class="meta"><div class="name">Agregar "${esc(document.getElementById('productSearch').value.trim())}" como ítem libre</div></div>
+  if(!matches.length){
+    html = `<div class="pick-row" onclick="openFreeItemModal('${esc(document.getElementById('productSearch').value.trim()).replace(/'/g,"\\'")}')">
+      <div class="meta"><div class="name">Sin resultados — agregar "${esc(document.getElementById('productSearch').value.trim())}" como ítem libre</div></div>
     </div>`;
+  }
   box.innerHTML = `<div class="card" style="margin-top:6px;padding:4px 10px;">${html}</div>`;
 }
 function addToCartById(id){
@@ -843,23 +865,71 @@ function addToCartById(id){
   else cart.push({refId:id, nombre:p.nombre, precio:p.precio, cantidad:1});
   finishAdd();
 }
-function addFreeItem(){
-  const nombre = document.getElementById('productSearch').value.trim();
-  if(!nombre) return;
-  const precio = parseFloat(prompt('Precio para "'+nombre+'":','0'))||0;
-  cart.push({refId:null, nombre, precio, cantidad:1});
-  finishAdd();
-}
 function finishAdd(){
   document.getElementById('productSearch').value='';
   document.getElementById('productSuggestions').innerHTML='';
   renderCart();
 }
+
+/* -------- Ítem libre (siempre disponible, sin buscar primero) -------- */
+function openFreeItemModal(nombrePrevio){
+  openModal(`
+    <div class="modal-title"><span>Ítem libre</span><button onclick="closeModal()">✕</button></div>
+    <p class="hint">Para cobrar algo que no está en tu catálogo de productos.</p>
+    <label>Descripción</label>
+    <input type="text" id="fiNombre" value="${esc(nombrePrevio||'')}" placeholder="Ej: Reparación express">
+    <div class="row">
+      <div><label>Precio</label><input type="number" id="fiPrecio" step="0.01" placeholder="0.00"></div>
+      <div><label>Cantidad</label><input type="number" id="fiCantidad" value="1" min="1" step="1"></div>
+    </div>
+    <div class="modal-actions"><button class="btn block gold" onclick="confirmarFreeItem()">Agregar a la factura</button></div>
+  `, {center:true});
+  setTimeout(()=>document.getElementById('fiNombre').focus(),50);
+}
+function confirmarFreeItem(){
+  const nombre = document.getElementById('fiNombre').value.trim();
+  const precio = parseFloat(document.getElementById('fiPrecio').value)||0;
+  const cantidad = Math.max(1, parseFloat(document.getElementById('fiCantidad').value)||1);
+  if(!nombre){ toast('Escribe una descripción'); return; }
+  cart.push({refId:null, nombre, precio, cantidad});
+  closeModal();
+  document.getElementById('productSearch').value='';
+  document.getElementById('productSuggestions').innerHTML='';
+  renderCart();
+}
+
+/* -------- Editar cantidad/precio de una línea ya agregada -------- */
 function changeQty(idx, delta){
   cart[idx].cantidad = Math.max(1, cart[idx].cantidad + delta);
   renderCart();
 }
 function removeFromCart(idx){ cart.splice(idx,1); renderCart(); }
+function editarLineaCarrito(idx){
+  const item = cart[idx];
+  if(!item) return;
+  openModal(`
+    <div class="modal-title"><span>Editar línea</span><button onclick="closeModal()">✕</button></div>
+    <label>Descripción</label>
+    <input type="text" id="elNombre" value="${esc(item.nombre)}">
+    <div class="row">
+      <div><label>Precio</label><input type="number" id="elPrecio" step="0.01" value="${item.precio}"></div>
+      <div><label>Cantidad</label><input type="number" id="elCantidad" value="${item.cantidad}" min="1" step="1"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn danger" onclick="removeFromCart(${idx});closeModal();">Quitar</button>
+      <button class="btn block" onclick="guardarLineaCarrito(${idx})">Guardar</button>
+    </div>
+  `, {center:true});
+}
+function guardarLineaCarrito(idx){
+  const nombre = document.getElementById('elNombre').value.trim();
+  const precio = parseFloat(document.getElementById('elPrecio').value)||0;
+  const cantidad = Math.max(1, parseFloat(document.getElementById('elCantidad').value)||1);
+  if(!nombre){ toast('Escribe una descripción'); return; }
+  Object.assign(cart[idx], {nombre, precio, cantidad});
+  closeModal(); renderCart();
+}
+
 function toggleDiscount(){
   const b = document.getElementById('discountBlock');
   b.style.display = b.style.display==='none' ? 'block' : 'none';
@@ -874,6 +944,27 @@ function calcularTotales(){
   const total = base + impuesto;
   return {subtotal, descuento, impuesto, total};
 }
+
+/* -------- Modo Factura rápida: un concepto + un monto, sin desglose -------- */
+let facturaModo = 'detallado';
+function setFacturaModo(m){
+  facturaModo = m;
+  document.getElementById('modeChip-detallado').classList.toggle('active', m==='detallado');
+  document.getElementById('modeChip-rapido').classList.toggle('active', m==='rapido');
+  document.getElementById('detalladoBlock').style.display = m==='detallado' ? 'block' : 'none';
+  document.getElementById('rapidoBlock').style.display = m==='rapido' ? 'block' : 'none';
+  document.getElementById('discountToggleBtn').style.display = m==='rapido' ? 'none' : 'inline-flex';
+  if(m==='rapido'){ document.getElementById('discountBlock').style.display='none'; document.getElementById('discountValue').value=0; }
+  cart = [];
+  if(m==='rapido') syncRapidoCart(); else renderCart();
+}
+function syncRapidoCart(){
+  const concepto = document.getElementById('rapidoConcepto').value.trim() || 'Venta';
+  const monto = parseFloat(document.getElementById('rapidoMonto').value)||0;
+  cart = monto>0 ? [{refId:null, nombre:concepto, precio:monto, cantidad:1}] : [];
+  renderCart();
+}
+
 function renderCart(){
   const list = document.getElementById('cartList');
   const empty = document.getElementById('cartEmpty');
@@ -887,17 +978,25 @@ function renderCart(){
     return;
   }
   empty.style.display='none'; totalsBox.style.display='block'; btn.disabled=false; paymentCard.style.display='block';
-  list.innerHTML = cart.map((i,idx)=>`
-    <div class="cart-item">
-      <div class="name">${esc(i.nombre)}</div>
-      <div class="qty-stepper">
-        <button onclick="changeQty(${idx},-1)">−</button>
-        <span>${i.cantidad}</span>
-        <button onclick="changeQty(${idx},1)">+</button>
-      </div>
-      <div class="linetotal tabular">${fmt(i.precio*i.cantidad)}</div>
-      <button class="rm" onclick="removeFromCart(${idx})">${trashIcon()}</button>
-    </div>`).join('');
+  if(facturaModo==='rapido'){
+    list.innerHTML = cart.map(i=>`
+      <div class="cart-item">
+        <div class="name">${esc(i.nombre)}</div>
+        <div class="linetotal tabular">${fmt(i.precio*i.cantidad)}</div>
+      </div>`).join('');
+  } else {
+    list.innerHTML = cart.map((i,idx)=>`
+      <div class="cart-item" onclick="editarLineaCarrito(${idx})" style="cursor:pointer;">
+        <div class="name">${esc(i.nombre)}</div>
+        <div class="qty-stepper" onclick="event.stopPropagation();">
+          <button onclick="changeQty(${idx},-1)">−</button>
+          <span>${i.cantidad}</span>
+          <button onclick="changeQty(${idx},1)">+</button>
+        </div>
+        <div class="linetotal tabular">${fmt(i.precio*i.cantidad)}</div>
+        <button class="rm" onclick="event.stopPropagation();removeFromCart(${idx})">${trashIcon()}</button>
+      </div>`).join('');
+  }
   const t = calcularTotales();
   document.getElementById('totSubtotal').textContent = fmt(t.subtotal);
   document.getElementById('totDescuento').textContent = '−'+fmt(t.descuento);
@@ -953,6 +1052,8 @@ function emitirFactura(){
   document.getElementById('clientPickLabel').classList.add('placeholder');
   document.getElementById('discountValue').value=0;
   document.getElementById('montoRecibido').value='';
+  document.getElementById('rapidoConcepto').value='';
+  document.getElementById('rapidoMonto').value='';
   ['efectivo','tarjeta','transferencia'].forEach(k=>document.getElementById('payChip-'+k).classList.toggle('active', k==='efectivo'));
   renderCart();
   toast('Factura '+numero+' emitida');
